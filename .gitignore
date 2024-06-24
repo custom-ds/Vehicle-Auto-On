@@ -1,0 +1,10 @@
+
+
+*.gcode
+*.bgcode
+
+*.FCBak
+
+*.kicad_sch-bak
+
+PCB/Vehicle Power Switch-backups/

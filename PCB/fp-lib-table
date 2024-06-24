@@ -1,0 +1,4 @@
+(fp_lib_table
+  (version 7)
+  (lib (name "Vehicle Power Switch")(type "KiCad")(uri "$(KIPRJMOD)/Vehicle Power Switch.pretty")(options "")(descr ""))
+)
