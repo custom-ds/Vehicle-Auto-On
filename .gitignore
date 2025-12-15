@@ -8,3 +8,9 @@
 *.kicad_sch-bak
 
 PCB/Vehicle Power Switch-backups/
+PCB/v2.1.0/Vehicle Power Switch-v2.1.0.zip
+
+*.zip
+*.gbr
+*.drl
+*.gbrjob
