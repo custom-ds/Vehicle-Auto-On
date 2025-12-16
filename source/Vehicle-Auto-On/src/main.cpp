@@ -121,16 +121,16 @@ void setup()
 
 
 
-  #ifdef DEBUG_SERIAL
+
+
   // Initialize custom bit-banged serial on PB2 (TX) and PB3 (RX)
   // Use a lower baud rate for better reliability with ATtiny404 at 3.33MHz
   customSerialInit();  // Initialize custom serial at 1200 baud
+
+
+  #ifdef DEBUG_SERIAL
   customSerialPrintln("Start..");
-  
-
   #endif
-customSerialInit();  // Initialize custom serial at 1200 baud
-
 
   // Initialize the LIS2HH12 accelerometer
   Wire.begin();
