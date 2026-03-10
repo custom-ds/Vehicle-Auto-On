@@ -5272,16 +5272,6 @@
 	)
 	(wire
 		(pts
-			(xy 182.88 128.27) (xy 182.88 135.89)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "322ef757-6044-437a-8b69-41867030b253")
-	)
-	(wire
-		(pts
 			(xy 256.54 171.45) (xy 256.54 173.99)
 		)
 		(stroke
@@ -5649,16 +5639,6 @@
 			(type default)
 		)
 		(uuid "7277f114-ee20-4d50-b9a0-89debe4c512d")
-	)
-	(wire
-		(pts
-			(xy 185.42 128.27) (xy 182.88 128.27)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "728ed940-e14d-4653-a5ff-d355a5aaa212")
 	)
 	(wire
 		(pts
@@ -6419,16 +6399,6 @@
 			(type default)
 		)
 		(uuid "efff5415-d780-4e05-a337-f4862ca8d92d")
-	)
-	(wire
-		(pts
-			(xy 179.07 135.89) (xy 182.88 135.89)
-		)
-		(stroke
-			(width 0)
-			(type default)
-		)
-		(uuid "f0f7892e-56a3-4cae-810b-b4f1e0620150")
 	)
 	(wire
 		(pts
@@ -8113,25 +8083,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" ""
-			(at 41.91 115.57 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "DIGKEY" ""
-			(at 41.91 115.57 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Digikey" "35-3522-2-ND"
+		(property "Digikey" "36-3522-2-ND"
 			(at 41.91 115.57 0)
 			(effects
 				(font
@@ -12147,25 +12099,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" ""
-			(at 41.91 161.29 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "DIGKEY" ""
-			(at 41.91 161.29 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Digikey" "35-3522-2-ND"
+		(property "Digikey" "36-3522-2-ND"
 			(at 41.91 161.29 0)
 			(effects
 				(font
@@ -12934,25 +12868,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" ""
-			(at 41.91 130.81 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "DIGKEY" ""
-			(at 41.91 130.81 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Digikey" "35-3522-2-ND"
+		(property "Digikey" "36-3522-2-ND"
 			(at 41.91 130.81 0)
 			(effects
 				(font
@@ -13037,25 +12953,7 @@
 				(hide yes)
 			)
 		)
-		(property "DIGIKEY" ""
-			(at 41.91 146.05 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "DIGKEY" ""
-			(at 41.91 146.05 0)
-			(effects
-				(font
-					(size 1.27 1.27)
-				)
-				(hide yes)
-			)
-		)
-		(property "Digikey" "35-3522-2-ND"
+		(property "Digikey" "36-3522-2-ND"
 			(at 41.91 146.05 0)
 			(effects
 				(font

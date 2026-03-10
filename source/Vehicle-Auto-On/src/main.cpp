@@ -36,7 +36,7 @@
 // How many cycles to wait between events. Each cycle is about 300mS
 
 #define CHECK_AUTO_INTERVAL 9   //Number of loop cycles between auto-checks for charging/motion. 9 = 3.0 seconds
-#define AUTO_SHUTDOWN_DELAY 30 //1800 //Number of cycles to wait before auto-shutdown when not charging or in motion. 1800 = about 10 minutes
+#define AUTO_SHUTDOWN_DELAY 1800 //Number of cycles to wait before auto-shutdown when not charging or in motion. 1800 = about 10 minutes. Set to 30 for debugging
 
 
 // LIS2HH12 accelerometer constants
@@ -116,8 +116,6 @@ void setup()
   pinMode(ANALOG_ENABLE, OUTPUT);
   pinMode(RELAY, OUTPUT);
 
-
-
   //Configure pullup resistors on the switches
   pinMode(SWITCH_AUTO, INPUT_PULLUP);
   pinMode(SWITCH_ON, INPUT_PULLUP);
@@ -127,15 +125,10 @@ void setup()
   pinMode(ANALOG_REFERENCE, INPUT);
 
 
-
-
-
   // Initialize custom bit-banged serial on PB2 (TX) and PB3 (RX)
   // Use a lower baud rate for better reliability with ATtiny404 at 3.33MHz
   customSerialInit();  // Initialize custom serial at 1200 baud
-  #ifdef DEBUG_SERIAL
-  customSerialPrintln("Start..");
-  #endif
+
 
   // Initialize the LIS2HH12 accelerometer
   Wire.begin();
@@ -146,7 +139,7 @@ void setup()
   initLIS2HH12();
   
   #ifdef DEBUG_SERIAL
-  customSerialPrintln("done");
+  customSerialPrintln("OK");
   #endif
 
   setupRTC();
@@ -226,6 +219,7 @@ void loop() {
       #ifdef DEBUG_SERIAL
       customSerialPrintln("1");
       #endif
+
       digitalWrite(RELAY, HIGH);
       ledMode = LIGHT_ON;
       ledCount = 0;
@@ -252,13 +246,28 @@ void loop() {
             ledCount = 0;
           }
           //reset the autoKeepAliveCount
-          autoKeepAliveCount = AUTO_SHUTDOWN_DELAY;
+          if (autoKeepAliveCount > 0) {
+            //we were already on, so just extend the keep-alive
+            autoKeepAliveCount = AUTO_SHUTDOWN_DELAY;
+          } else {
+            //we were off, so set the keep-alive to turn on the relay, but set it to a higher initial value to allow the alternator to stabilize
+            autoKeepAliveCount = AUTO_SHUTDOWN_DELAY + 10;
+          }
 
         } else {
           //maybe it's moving but the battery voltage is dropping - this happens on modern cars with smart alternators
 
           //but make sure that the Auto had previously been woken due to charging, before failing back to motion detection for keep-alive
+          #ifdef DEBUG_SERIAL
+          customSerialPrint(autoKeepAliveCount);
+          customSerialPrintln("");
+          #endif
+
           if (autoKeepAliveCount > 0) {
+            #ifdef DEBUG_SERIAL
+            customSerialPrintln("M");
+            #endif
+
             if (isInMotion()) {
               //the car is moving - stay awake
               autoReaffirm = CHECK_AUTO_INTERVAL;
@@ -273,7 +282,7 @@ void loop() {
               // Not charging and not in motion - start the shutdown process
               ledMode = LIGHT_OFF;
               ledCount = 0;
-              // autoShutdown
+              autoReaffirm = 3;
             }
           }
         }
@@ -282,7 +291,12 @@ void loop() {
       //Check the state of the relay based on the autoKeepAliveCount
       if (autoKeepAliveCount > 0) {
         autoKeepAliveCount--;   //decrement the keep-alive counter while it's positive
-        digitalWrite(RELAY, HIGH);
+        // see if we're over the max countdown, which indicates that we're waiting a couple of seconds for the alternator to stabilize before energizing the relay
+        if (autoKeepAliveCount <= AUTO_SHUTDOWN_DELAY) {
+          //we're witin the normal operating range, so energize the relay
+          digitalWrite(RELAY, HIGH);
+        }
+        
         lowPower = false;   //stay awake while the relay is on
       } else {
         digitalWrite(RELAY, LOW);
@@ -324,7 +338,8 @@ void loop() {
 
 
 
-
+  customSerialPrint(lowPower);
+  customSerialPrintln("");
   goToSleep(lowPower);
 }
 
@@ -351,11 +366,11 @@ void setupRTC() {
 void goToSleep(bool lowPowerMode) {
 
   if (lowPowerMode) {
-  set_sleep_mode(SLEEP_MODE_PWR_DOWN);
-  sleep_enable();
-  sei();
-  sleep_cpu();
-  sleep_disable();
+    set_sleep_mode(SLEEP_MODE_PWR_DOWN);
+    sleep_enable();
+    sei();
+    sleep_cpu();
+    sleep_disable();
   } else {
     delay(250);
   }
@@ -364,36 +379,38 @@ void goToSleep(bool lowPowerMode) {
 
 
 bool isCharging() {
-  uint16_t battLevel, refLevel;
 
+  uint16_t battery, reference;
 
   //read the analog inputs
   digitalWrite(ANALOG_ENABLE, HIGH);    //enable the analog circuitry
-  delay(25);    //wait for it to stabilize
-  battLevel = analogRead(ANALOG_BATTERY_LEVEL);
-  refLevel = analogRead(ANALOG_REFERENCE);
+
+  battery = analogRead(ANALOG_BATTERY_LEVEL);
+  reference = analogRead(ANALOG_REFERENCE);
+
   //turn off the analog enable pin
-  digitalWrite(ANALOG_ENABLE, LOW);     
+  digitalWrite(ANALOG_ENABLE, LOW);
 
-
-
-  //Desensitize the reference level a bit to avoid noise
-  refLevel = refLevel / 4;  //divide by 4 to reduce noise sensitivity
-  refLevel = refLevel + 526; //311 is about 11.5V on the battery sense line
+  //Convert to millivolts
+  //battery = (float)(battery * 1);  //Show the raw value for debugging
+  battery = (float)(battery * 18.32);// + 308;   //approximate battery voltage in mV 18.31
+  if (digitalRead(RELAY) == HIGH) {
+    //the relay is on, so the offset voltage is elevated due to voltage drop across resettable fuse
+    battery += 568;
+  } else {
+    battery += 320;
+  }
+  
+  reference = (reference * 2) + 12000; //approximate reference voltage in mV
 
   #ifdef DEBUG_SERIAL
   customSerialPrint("Bat ");
-  customSerialPrint(battLevel);
-  // customSerialPrintln("");
-  // customSerialPrint("Ref  ");
-  // customSerialPrint(refLevel);
-  // customSerialPrintln("");      
-  customSerialPrint("CRef ");
-  customSerialPrint(refLevel);
+  customSerialPrint(battery);
+  customSerialPrint(" / ");
+  customSerialPrint(reference);
   customSerialPrintln("");
+  return (battery > reference);
   #endif
-
-  return (battLevel > refLevel);
 }
 
 
@@ -433,10 +450,6 @@ bool initLIS2HH12() {
   customSerialPrint(whoAmI);
 
   if (whoAmI != 0x41) {  // Expected WHO_AM_I value for LIS2HH12
-
-    digitalWrite(RELAY, HIGH); //debug
-    delay(250);
-    digitalWrite(RELAY, LOW);  //debug
     return false;
   }
   
@@ -457,7 +470,9 @@ bool initLIS2HH12() {
   prevAccelZ = readLIS2HH12Axis(LIS2HH12_OUT_Z_L, LIS2HH12_OUT_Z_H);
   
   accelInitialized = true;
-
+  #ifdef DEBUG_SERIAL
+  customSerialPrintln("a");
+  #endif
   return true;
 }
 
@@ -467,12 +482,23 @@ bool isInMotion() {
   if (!accelInitialized) {
     return false; // Accelerometer not initialized
   }
+
   
   // Read current acceleration values
   int16_t currentAccelX = readLIS2HH12Axis(LIS2HH12_OUT_X_L, LIS2HH12_OUT_X_H);
   int16_t currentAccelY = readLIS2HH12Axis(LIS2HH12_OUT_Y_L, LIS2HH12_OUT_Y_H);
   int16_t currentAccelZ = readLIS2HH12Axis(LIS2HH12_OUT_Z_L, LIS2HH12_OUT_Z_H);
   
+  // Debug output
+  #ifdef DEBUG_SERIAL
+  customSerialPrint(currentAccelX);
+  customSerialPrint(" ");
+  customSerialPrint(currentAccelY);
+  customSerialPrint(" ");
+  customSerialPrint(currentAccelZ);
+  customSerialPrintln("");
+  #endif
+
   // Calculate the difference from previous readings
   int16_t deltaX = abs(currentAccelX - prevAccelX);
   int16_t deltaY = abs(currentAccelY - prevAccelY);
