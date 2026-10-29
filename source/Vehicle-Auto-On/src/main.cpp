@@ -6,7 +6,7 @@
 #include <avr/wdt.h>
 //include <avr/pgmspace.h>
 
-#define F_CPU 3333333U
+// F_CPU is set by board_build.f_cpu in platformio.ini
 
 
 
@@ -29,11 +29,9 @@
 #define SOFT_SERIAL_TX PIN_PB3
 
 //Constants
-#define MAX_COUNDOWN 2400   //Half-second intervals to keep the relay on after losing battery voltage sense. Set to 20 minutes (2400 * 0.5s)
-//define MAX_COUNDOWN 10   //Half-second intervals to keep the relay on after losing battery voltage sense --- IGNORE ---
 #define SWITCH_POSITION_DELAY 3
 
-// How many cycles to wait between events. Each cycle is about 300mS
+// How many cycles to wait between events. Each cycle is about 250mS
 
 #define CHECK_AUTO_INTERVAL 9   //Number of loop cycles between auto-checks for charging/motion. 9 = 3.0 seconds
 #define AUTO_SHUTDOWN_DELAY 1800 //Number of cycles to wait before auto-shutdown when not charging or in motion. 1800 = about 10 minutes. Set to 30 for debugging
@@ -45,27 +43,20 @@
 #define LIS2HH12_CTRL1 0x20
 #define LIS2HH12_CTRL2 0x21
 #define LIS2HH12_CTRL3 0x22
-#define LIS2HH12_OUT_X_L 0x28
-#define LIS2HH12_OUT_X_H 0x29
-#define LIS2HH12_OUT_Y_L 0x2A
-#define LIS2HH12_OUT_Y_H 0x2B
-#define LIS2HH12_OUT_Z_L 0x2C
-#define LIS2HH12_OUT_Z_H 0x2D
+#define LIS2HH12_CTRL4 0x23
+#define LIS2HH12_OUT_X_L 0x28   // X_L, X_H, Y_L, Y_H, Z_L, Z_H are read as one 6-byte burst
 
 // Motion detection threshold (adjust based on sensitivity needs)
-#define MOTION_THRESHOLD 100  // Raw acceleration difference threshold
-#define MOTION_SAMPLES 3      // Number of samples to compare for motion detection
-
-
-// Define the timer frequency (1 Hz)
-const uint32_t timerFrequency = 1; // 1 Hz
+#define MOTION_THRESHOLD 200  // Raw acceleration difference threshold. At +/-2g, 1 LSB = 0.061mg, so 200 = ~12mg
+#define MOTION_CONFIRM_COUNT 2  // Number of consecutive motion checks required before reporting motion
 
 // Global variables for motion detection
 int16_t prevAccelX = 0, prevAccelY = 0, prevAccelZ = 0;
 bool accelInitialized = false;
+uint8_t motionCount = 0;
 
 // Custom serial configuration
-#define CUSTOM_BAUD_RATE 960    //works out to be 1200 baud. The bit-banging is very sensitive to timing errors
+#define CUSTOM_BAUD_RATE 1200   //The bit-banging is very sensitive to timing errors
 #define BIT_DELAY_US (1000000UL / CUSTOM_BAUD_RATE)  // Microseconds per bit
 
 //Enum switch state
@@ -93,13 +84,14 @@ void goToSleep(bool lowPowerMode);
 bool initLIS2HH12();
 void writeLIS2HH12Register(uint8_t reg, uint8_t value);
 uint8_t readLIS2HH12Register(uint8_t reg);
-int16_t readLIS2HH12Axis(uint8_t regL, uint8_t regH);
+bool readLIS2HH12Accel(int16_t &x, int16_t &y, int16_t &z);
 
 void customSerialInit();
 void customSerialWrite(uint8_t data);
 void customSerialPrint(const char* str);
 void customSerialPrint(uint16_t num);
 void customSerialPrintln(const char* str);
+void customSerialPrintln(uint16_t num);
 
 
 
@@ -132,9 +124,7 @@ void setup()
 
   // Initialize the LIS2HH12 accelerometer
   Wire.begin();
-  #ifdef DEBUG_SERIAL
-  customSerialPrintln("Init");
-  #endif
+
 
   initLIS2HH12();
   
@@ -143,28 +133,24 @@ void setup()
   #endif
 
   setupRTC();
+
+  //wdt_enable(WDTO_2S);  // Enable watchdog with 2-second timeout (disabled for power testing)
 }
 
 
 
 
 void loop() {
-  SwitchState nextPosition;
+  static SwitchState nextPosition = STATE_OFF;
 
   //static vars to survive the sleep cycles
-  static LightState ledMode;
+  static LightState ledMode = LIGHT_OFF;
   static uint16_t nextPositionDelay = 0;
   static uint16_t autoReaffirm = 0;
   static uint16_t autoKeepAliveCount = 0;
   static uint16_t ledCount = 0;
 
-  static int autoCountdown;
   static bool lowPower = false;
-
-
-  //Check the switch state
-  pinMode(SWITCH_AUTO, INPUT_PULLUP);
-  pinMode(SWITCH_ON, INPUT_PULLUP);  
 
 
   //Assume it's safe to go into low-power mode
@@ -203,7 +189,7 @@ void loop() {
     case STATE_OFF:
       // Turn off the relay and LED
       #ifdef DEBUG_SERIAL
-      customSerialPrintln("0");
+        customSerialPrintln("0");
       #endif
 
       digitalWrite(RELAY, LOW);
@@ -217,7 +203,7 @@ void loop() {
     case STATE_ON:
       // Turn on the relay and LED
       #ifdef DEBUG_SERIAL
-      customSerialPrintln("1");
+        customSerialPrintln("1");
       #endif
 
       digitalWrite(RELAY, HIGH);
@@ -231,7 +217,7 @@ void loop() {
     case STATE_AUTO:
       // In auto mode, check for battery voltage, and motion if we're already switched on
       #ifdef DEBUG_SERIAL
-      customSerialPrintln("A");
+        customSerialPrintln("A");
       #endif
 
       if (autoReaffirm > 0) {
@@ -259,8 +245,7 @@ void loop() {
 
           //but make sure that the Auto had previously been woken due to charging, before failing back to motion detection for keep-alive
           #ifdef DEBUG_SERIAL
-          customSerialPrint(autoKeepAliveCount);
-          customSerialPrintln("");
+          customSerialPrintln(autoKeepAliveCount);
           #endif
 
           if (autoKeepAliveCount > 0) {
@@ -337,9 +322,10 @@ void loop() {
   }
 
 
-
-  customSerialPrint(lowPower);
-  customSerialPrintln("");
+  #ifdef DEBUG_SERIAL
+    customSerialPrintln((uint16_t)lowPower);
+  #endif
+  //wdt_reset();  // Pet the watchdog before sleeping (disabled for power testing)
   goToSleep(lowPower);
 }
 
@@ -384,6 +370,7 @@ bool isCharging() {
 
   //read the analog inputs
   digitalWrite(ANALOG_ENABLE, HIGH);    //enable the analog circuitry
+  delay(5);   // let the analog front-end settle before reading
 
   battery = analogRead(ANALOG_BATTERY_LEVEL);
   reference = analogRead(ANALOG_REFERENCE);
@@ -393,7 +380,7 @@ bool isCharging() {
 
   //Convert to millivolts
   //battery = (float)(battery * 1);  //Show the raw value for debugging
-  battery = (float)(battery * 18.32);// + 308;   //approximate battery voltage in mV 18.31
+  battery = (uint16_t)(((uint32_t)battery * 1832) / 100);// + 308;   //approximate battery voltage in mV (x18.32). Integer math - float doesn't fit in flash
   if (digitalRead(RELAY) == HIGH) {
     //the relay is on, so the offset voltage is elevated due to voltage drop across resettable fuse
     battery += 568;
@@ -404,13 +391,12 @@ bool isCharging() {
   reference = (reference * 2) + 12000; //approximate reference voltage in mV
 
   #ifdef DEBUG_SERIAL
-  customSerialPrint("Bat ");
+  customSerialPrint("V ");
   customSerialPrint(battery);
   customSerialPrint(" / ");
-  customSerialPrint(reference);
-  customSerialPrintln("");
-  return (battery > reference);
+  customSerialPrintln(reference);
   #endif
+  return (battery > reference);
 }
 
 
@@ -436,39 +422,62 @@ uint8_t readLIS2HH12Register(uint8_t reg) {
   return 0;
 }
 
-// Helper function to read 16-bit accelerometer data
-int16_t readLIS2HH12Axis(uint8_t regL, uint8_t regH) {
-  uint8_t low = readLIS2HH12Register(regL);
-  uint8_t high = readLIS2HH12Register(regH);
-  return (int16_t)((high << 8) | low);
+// Read all three axes in one burst (register address auto-increments via CTRL4 IF_ADD_INC).
+// Combined with BDU, this guarantees all 6 bytes come from the same sample.
+// Returns false on any I2C error.
+bool readLIS2HH12Accel(int16_t &x, int16_t &y, int16_t &z) {
+  Wire.beginTransmission(LIS2HH12_I2C_ADDRESS);
+  Wire.write(LIS2HH12_OUT_X_L);
+  if (Wire.endTransmission(false) != 0) {
+    return false;
+  }
+
+  if (Wire.requestFrom(LIS2HH12_I2C_ADDRESS, 6) != 6) {
+    return false;
+  }
+
+  uint8_t buf[6];
+  for (uint8_t i = 0; i < 6; i++) {
+    buf[i] = Wire.read();
+  }
+  x = (int16_t)((buf[1] << 8) | buf[0]);
+  y = (int16_t)((buf[3] << 8) | buf[2]);
+  z = (int16_t)((buf[5] << 8) | buf[4]);
+  return true;
 }
 
 // Initialize the LIS2HH12 accelerometer
 bool initLIS2HH12() {
   // Check WHO_AM_I register
   uint8_t whoAmI = readLIS2HH12Register(LIS2HH12_WHO_AM_I);
+  #ifdef DEBUG_SERIAL
   customSerialPrint(whoAmI);
+  #endif
 
   if (whoAmI != 0x41) {  // Expected WHO_AM_I value for LIS2HH12
     return false;
   }
   
-  // Configure CTRL1 register: Enable X, Y, Z axes, set data rate to 10Hz
-  writeLIS2HH12Register(LIS2HH12_CTRL1, 0x17); // 0001 0111: 10Hz, XYZ enabled
-  
+  // Configure CTRL1 register: Enable X, Y, Z axes, set data rate to 10Hz, block data update
+  writeLIS2HH12Register(LIS2HH12_CTRL1, 0x1F); // 0001 1111: 10Hz, BDU, XYZ enabled
+
   // Configure CTRL2 register: +/- 2g full scale
   writeLIS2HH12Register(LIS2HH12_CTRL2, 0x00); // 0000 0000: +/- 2g
-  
+
   // Configure CTRL3 register: Default settings
   writeLIS2HH12Register(LIS2HH12_CTRL3, 0x00);
-  
+
+  // Configure CTRL4 register: register address auto-increment (the default, but the burst read depends on it)
+  writeLIS2HH12Register(LIS2HH12_CTRL4, 0x04); // 0000 0100: IF_ADD_INC
+
   delay(100); // Allow time for configuration
-  
+
   // Read initial values
-  prevAccelX = readLIS2HH12Axis(LIS2HH12_OUT_X_L, LIS2HH12_OUT_X_H);
-  prevAccelY = readLIS2HH12Axis(LIS2HH12_OUT_Y_L, LIS2HH12_OUT_Y_H);
-  prevAccelZ = readLIS2HH12Axis(LIS2HH12_OUT_Z_L, LIS2HH12_OUT_Z_H);
-  
+  if (!readLIS2HH12Accel(prevAccelX, prevAccelY, prevAccelZ)) {
+    return false;
+  }
+
+  motionCount = 0;
   accelInitialized = true;
   #ifdef DEBUG_SERIAL
   customSerialPrintln("a");
@@ -480,39 +489,54 @@ bool isInMotion() {
   //Check the LIS2HH12 accelerometer for motion
 
   if (!accelInitialized) {
-    return false; // Accelerometer not initialized
+    // Init failed earlier (e.g. sensor not booted yet at power-up) - retry, and report no motion this time
+    initLIS2HH12();
+    return false;
   }
 
-  
-  // Read current acceleration values
-  int16_t currentAccelX = readLIS2HH12Axis(LIS2HH12_OUT_X_L, LIS2HH12_OUT_X_H);
-  int16_t currentAccelY = readLIS2HH12Axis(LIS2HH12_OUT_Y_L, LIS2HH12_OUT_Y_H);
-  int16_t currentAccelZ = readLIS2HH12Axis(LIS2HH12_OUT_Z_L, LIS2HH12_OUT_Z_H);
-  
+
+  // Read current acceleration values. Treat an I2C error as no motion so a bus fault can't keep the relay on.
+  int16_t currentAccelX, currentAccelY, currentAccelZ;
+  if (!readLIS2HH12Accel(currentAccelX, currentAccelY, currentAccelZ)) {
+    #ifdef DEBUG_SERIAL
+    customSerialPrintln("E");
+    #endif
+    motionCount = 0;
+    return false;
+  }
+
   // Debug output
   #ifdef DEBUG_SERIAL
   customSerialPrint(currentAccelX);
   customSerialPrint(" ");
   customSerialPrint(currentAccelY);
   customSerialPrint(" ");
-  customSerialPrint(currentAccelZ);
-  customSerialPrintln("");
+  customSerialPrintln((uint16_t)currentAccelZ);
   #endif
 
   // Calculate the difference from previous readings
-  int16_t deltaX = abs(currentAccelX - prevAccelX);
-  int16_t deltaY = abs(currentAccelY - prevAccelY);
-  int16_t deltaZ = abs(currentAccelZ - prevAccelZ);
-  
+  uint16_t deltaX = (uint16_t)abs((int32_t)currentAccelX - prevAccelX);
+  uint16_t deltaY = (uint16_t)abs((int32_t)currentAccelY - prevAccelY);
+  uint16_t deltaZ = (uint16_t)abs((int32_t)currentAccelZ - prevAccelZ);
+
   // Check if any axis exceeds the motion threshold
   bool motionDetected = (deltaX > MOTION_THRESHOLD) || (deltaY > MOTION_THRESHOLD) || (deltaZ > MOTION_THRESHOLD);
-  
+
   // Update previous values for next comparison
   prevAccelX = currentAccelX;
   prevAccelY = currentAccelY;
   prevAccelZ = currentAccelZ;
-  
-  return motionDetected;
+
+  // Require several consecutive detections, so a single bump (or a stale previous reading) doesn't count as motion
+  if (motionDetected) {
+    if (motionCount < MOTION_CONFIRM_COUNT) {
+      motionCount++;
+    }
+  } else {
+    motionCount = 0;
+  }
+
+  return (motionCount >= MOTION_CONFIRM_COUNT);
 }
 
 // Custom bit-banged serial implementation
@@ -553,6 +577,12 @@ void customSerialPrint(uint16_t num) {
 
 void customSerialPrintln(const char* str) {
   customSerialPrint(str);
+  customSerialWrite('\r');
+  customSerialWrite('\n');
+}
+
+void customSerialPrintln(uint16_t num) {
+  customSerialPrint(num);
   customSerialWrite('\r');
   customSerialWrite('\n');
 }
